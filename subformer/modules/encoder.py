@@ -6,6 +6,8 @@ from torch.nn import TransformerEncoder as PyTorchTransformerEncoder
 from torch.nn import TransformerEncoderLayer as PyTorchTransformerEncoderLayer
 from torch.nn import MultiheadAttention, ReLU
 from torch_geometric.data import Data
+from torch_geometric.utils import to_dense_batch
+
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -61,33 +63,14 @@ class Encoder(torch.nn.Module):
 
         reset_model_weights(self.encoder)
 
-    def forward(self, x_clique: torch.Tensor, data: Data) -> tuple[Any, Any]:
+    def forward(self, x_clique: torch.Tensor, data: Data) -> torch.Tensor:
 
-        tree_list = torch.split(x_clique, data.num_cliques.tolist())
-        max_length = self.padding_length
-        src_padded = []
-        masks = []
-
-        for src in tree_list:
-
-            src = torch.cat([self.cls_token, src], dim=0)
-            pad_length = max_length - len(src)
-            mask = torch.zeros((1, max_length), dtype=torch.bool).to(device)
-            mask[:, :] = True
-            mask[:, 0:len(src)] = False
-            padded_src = torch.cat([src, torch.zeros([pad_length, self.d_model], dtype=torch.float).to(device)],
-                                   dim=0).to(device)
-            src_padded.append(padded_src)
-            masks.append(mask)
-
-        src_padded = torch.stack(src_padded, dim=0).to(device)
-        masks_padded = torch.stack(masks, dim=0).to(device).squeeze(1)
-
-        src = src_padded
-        mask = masks_padded
-
-        output = self.encoder(src, src_key_padding_mask=mask)
-        raw = output
+        tree_batch = torch.repeat_interleave(data.batch, data.num_cliques.tolist(), dim=0)
+        src, mask = to_dense_batch(x_clique, batch=tree_batch)
+        cls_token = self.cls_token.expand(src.shape[0], -1, -1)
+        src = torch.cat([cls_token, src], dim=1)
+        mask = torch.cat([torch.ones(src.shape[0], 1).bool().to(self.device), mask], dim=1)
+        output = self.encoder(src, src_key_padding_mask=~mask)
         output = output[:, 0, :]
 
         return output
