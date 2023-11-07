@@ -19,10 +19,6 @@ class PositionalEncoding(torch.nn.Module):
         self.use_lpe = use_lpe
         self.use_spa = use_spa
         self.concat_pe = concat_pe
-        # if concat_pe:
-        #     self.pre_norm = BatchNorm1d(hidden_channels * 2 )
-        # else:
-        #     self.pre_norm = BatchNorm1d(hidden_channels)
 
         if activation == 'relu':
             self.activation = torch.nn.ReLU()
@@ -49,8 +45,6 @@ class PositionalEncoding(torch.nn.Module):
             if not concat_pe:
                 self.spa_merge = Linear(hidden_channels, hidden_channels)
 
-
-            print('Concatenating positional encodings,please remember to change the input dimension of the encoder')
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -82,24 +76,19 @@ class PositionalEncoding(torch.nn.Module):
             lpe = data.tree_lpe.to(torch.float32)
             lpe_mask = torch.isnan(lpe)
             lpe[lpe_mask] = 0
-            # lpe = self.activation(lpe)
             lpe = self.lpe_lin(lpe)
-            lpe = self.activation(lpe)
 
             if self.concat_pe:
                 x_clique = torch.cat([x_clique, lpe], dim=-1)
 
             else:
                 x_clique = x_clique + lpe
-                x_clique = self.lpe_merge(x_clique)
 
         if self.use_spa:
             spa = data.tree_spa.to(torch.float32)
             spa_mask = torch.isnan(spa)
             spa[spa_mask] = 0
-            # spa = self.activation(spa)
             spa = self.spa_lin(spa)
-            spa = self.activation(spa)
 
             if self.concat_pe:
                 x_clique = torch.cat([x_clique, spa], dim=-1)
