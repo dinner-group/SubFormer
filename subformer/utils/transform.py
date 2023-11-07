@@ -101,9 +101,7 @@ class GEOM_OGB(object):
 class JunctionTree(object):
     def __call__(self, data: Data):
         mol = mol_from_data(data)
-        # tree = tree_decomposition(mol,addHs=True, return_vocab=True)
         tree = tree_decomposition(mol, return_vocab=True)
-
         tree_edge_index, atom2clique_index, num_cliques, x_clique = tree
         data = JunctionTreeData(**{k: v for k, v in data})
 
@@ -113,8 +111,26 @@ class JunctionTree(object):
         data.x_clique = x_clique
         data.edge_attr_graph = data.edge_attr
         data.edge_index_graph = data.edge_index
+
+        ## graph level
+        data.graph_degree = comp_deg(data.edge_index_graph, data.num_nodes)
+        data.graph_lpe,data.graph_product = comp_pe(
+            dim=10,
+            edge_attr=None,
+            edge_index=data.edge_index_graph,
+            num_nodes=data.num_nodes,
+            normalization='none',
+            use_edge_attr=False,
+            correct_sign=True
+        ).to(float)
+        data.graph_spa,data.graph_sp_product = comp_spa(
+            dim=10,
+            num_nodes=data.num_nodes,
+            edge_index=data.edge_index_graph,
+        ).to(float)
+        ## tree level
         data.tree_degree = comp_deg(tree_edge_index, num_cliques)
-        data.tree_lpe = comp_pe(
+        data.tree_lpe,data.tree_product = comp_pe(
             dim=10,
             edge_attr=None,
             edge_index=tree_edge_index,
@@ -126,9 +142,10 @@ class JunctionTree(object):
         if num_cliques < 1:
             print('this datapoint should be skipped')
             data.tree_spa = torch.zeros(num_cliques, 10)
+            data.tree_sp_product = torch.zeros(num_cliques, 1)
             return data
 
-        data.tree_spa = comp_spa(
+        data.tree_spa,data.tree_sp_product = comp_spa(
             dim=10,
             num_nodes=num_cliques,
             edge_index=tree_edge_index,
