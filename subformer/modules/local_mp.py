@@ -88,21 +88,6 @@ class LocalMP(torch.nn.Module):
                 self.graph_norms.append(BatchNorm1d(hidden_channels))
                 self.sub_norms.append(BatchNorm1d(hidden_channels))
 
-        elif local_mp == 'pna':
-
-            aggregators = ['mean','std']
-            scalers = ['identity', 'amplification', 'attenuation']
-            for _ in range(num_layers):
-                self.bond_encoders.append(BondEncoder(hidden_channels))
-                conv = PNAConv(in_channels=hidden_channels,
-                               out_channels=hidden_channels,
-                               aggregators=aggregators, scalers=scalers, deg=deg,
-                               edge_dim=hidden_channels, towers=4, pre_layers=1, post_layers=1,
-                               divide_input=False)
-                self.graph_convs.append(conv)
-                self.graph_norms.append(BatchNorm1d(hidden_channels))
-                self.sub_norms.append(BatchNorm1d(hidden_channels))
-
         else:
             print('local_mp must be gine or aGAT for now')
             raise NotImplementedError
@@ -125,6 +110,15 @@ class LocalMP(torch.nn.Module):
             self.pe_lin = Linear(pe_dim, hidden_channels)
             self.cat_lin = Linear(2 * hidden_channels, hidden_channels)
 
+            self.degree_emb = torch.nn.Embedding(50, hidden_channels//8)
+            self.degree_lin = torch.nn.Linear(hidden_channels + hidden_channels//8, hidden_channels)
+
+            self.product_lin = Linear(1, hidden_channels//8)
+            self.product_merge = Linear(hidden_channels + hidden_channels//8, hidden_channels)
+
+            self.pe_lin = Linear(pe_dim, hidden_channels)
+            self.pe_merge = Linear(2*hidden_channels, hidden_channels)
+
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -146,6 +140,37 @@ class LocalMP(torch.nn.Module):
             self.pe_lin.reset_parameters()
             self.cat_lin.reset_parameters()
 
+    def init_pe(self, data: Data, x:torch.Tensor,pe_type:str):
+        
+        graph_deg = data.graph_degree
+        graph_lpe = data.graph_lpe
+        graph_product = data.graph_product
+        graph_spa = data.graph_spa
+        graph_sp_product = data.graph_sp_product
+
+        if pe_type == 'lpe':
+            graph_pe = graph_lpe
+            graph_product = graph_product
+        elif pe_type == 'spde':
+            graph_pe = graph_spa
+            graph_product = graph_sp_product
+
+
+        graph_deg = self.degree_emb(graph_deg.long())
+        x = torch.cat([x, graph_deg], dim=-1)
+        x = self.degree_lin(graph_deg)
+        
+        graph_product = graph_product.unsqueeze(-1)
+        graph_product = self.product_lin(graph_product)
+        x = torch.cat([x, graph_product], dim=-1)
+        x = self.product_merge(x)
+        
+        graph_pe = self.pe_lin(graph_pe)
+        x = torch.cat([x, graph_pe], dim=-1)
+        x = self.pe_merge(x)
+
+        return x
+
     def forward(self, data: Data):
 
         x = self.atom_encoder(data.x.squeeze())
@@ -154,13 +179,7 @@ class LocalMP(torch.nn.Module):
         x_clique = self.clique(x_clique)
 
         if self.pe_fea:
-            pe = data.tree_lpe.to(torch.float32)
-            pe_mask = torch.isnan(pe)
-            pe[pe_mask] = 0
-            pe = self.pe_lin(pe)
-            x_clique = torch.cat([x_clique, pe], dim=-1)
-            x_clique = self.activation(x_clique)
-            x_clique = self.cat_lin(x_clique)
+            x = self.init_pe(data, x,self.pe_type)
 
         for i in range(self.num_layers):
             edge_attr = self.bond_encoders[i](data.edge_attr_graph)
@@ -182,6 +201,6 @@ class LocalMP(torch.nn.Module):
                 x_clique[col], row, dim=0, dim_size=x.size(0),
                 reduce=self.aggregation))))
 
-        del edge_index, edge_attr
         graph_readout = scatter(x, data.batch, reduce='sum', dim=0)
+        
         return x_clique, graph_emb, graph_readout
