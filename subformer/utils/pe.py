@@ -80,7 +80,7 @@ def comp_spa(
     adj = torch.zeros((num_nodes, num_nodes), dtype=torch.bool)
     adj[edge_index[0, :], edge_index[1, :]] = True
     shortest_path_result, path = algos.floyd_warshall(adj.numpy())
-    spatial_pos = torch.from_numpy(shortest_path_result).long()
+    spatial_pos = torch.from_numpy(shortest_path_result)
 
     _, eig_vec = np.linalg.eigh(spatial_pos)
     eig_vec = eig_vec[:, :dim]
